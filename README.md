@@ -2,9 +2,9 @@
 ## Contexto
 Eu queria um programa que desativasse o microfone e emitisse um pequeno aviso sonoro.
 ## Sobre o programa
-Esse programa é basicamente um silenciador/ativador de microfone. É possível selecionar o microfone e o atalho para mutar/desmutar
+Esse programa é basicamente um silenciador/ativador de microfone. É possível selecionar o microfone e o atalho para mutar/desmutar. Ele funciona em segundo plano.
 ## Próximas atualizações
-Pretendo fazer com que ele funcione em segundo plano.
+Pretendo fazer com que ele tenha uma sobreposição que indique quando está mutado.
 ## Sistema Operacional
 Ele só funciona no **Windows**.
 ## Ícone do programa
