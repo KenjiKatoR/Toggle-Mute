@@ -3,6 +3,10 @@ import keyboard
 import winsound
 import json
 import os
+import threading
+import pystray
+
+from PIL import Image
 
 from pycaw.constants import DEVICE_STATE
 
@@ -230,9 +234,44 @@ def alternar_mute():
     except Exception as erro:
         print("Erro ao alterar mute: ", erro)
 
+#---Segundo plano---
+
+def esconder_janela():
+    app.withdraw()
+
+def mostrar_janela(icon = None, item = None):
+    app.after(0, app.deiconify)
+    app.after(0, app.lift)
+    app.after(0, app.focus_force)
+
+def iniciar_tray():
+    image = Image.open("assets/icon.ico")
+
+    menu = pystray.Menu(
+        pystray.MenuItem(
+            "Abrir",
+            mostrar_janela,
+            default = True
+        ),
+
+        pystray.MenuItem(
+            "Sair",
+            fechar_programa
+        )
+    )
+
+    icon = pystray.Icon(
+        "MutaMic",
+        image,
+        "Muta Mic",
+        menu
+    )
+
+    icon.run()
+
 #---Encerrar programa---
 
-def fechar_programa():
+def fechar_programa(icon=None, item=None):
     global atalho_captura
 
     try:
@@ -243,7 +282,10 @@ def fechar_programa():
 
     atalho_captura = None
 
-    app.destroy()
+    if icon is not None:
+        icon.stop()
+
+    app.after(0, app.destroy)
 
 #---Atalho---
 
@@ -495,8 +537,10 @@ atualizar_lista_microfones()
 
 registrar_atalho()
 
-app.protocol("WM_DELETE_WINDOW", fechar_programa)
+app.protocol("WM_DELETE_WINDOW", esconder_janela)
 
 atualizar_interface()
+
+threading.Thread(target=iniciar_tray,daemon=True).start()
 
 app.mainloop()
