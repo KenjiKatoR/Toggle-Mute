@@ -5,12 +5,15 @@ import json
 import os
 import threading
 import pystray
+import ctypes
 
 from PIL import Image
 
 from pycaw.constants import DEVICE_STATE
 
 from pycaw.pycaw import AudioUtilities, EDataFlow
+
+from ctypes import wintypes
 
 #---Configuração---
 
@@ -194,6 +197,8 @@ def atualizar_interface():
                 hover_color="#246b45",
             )
 
+            mostrar_overlay()
+
         else:
             icone.configure(text="🔊")
             status.configure(
@@ -206,6 +211,8 @@ def atualizar_interface():
                 fg_color="#c0392b",
                 hover_color="#922b21",
             )
+
+            esconder_overlay()
 
     except Exception as erro:
         print("Erro ao atualizar interface: ", erro)
@@ -284,6 +291,9 @@ def fechar_programa(icon=None, item=None):
 
     if icon is not None:
         icon.stop()
+
+    if overlay_hwnd:
+        user32.DestroyWindow(overlay_hwnd)
 
     app.after(0, app.destroy)
 
@@ -531,7 +541,286 @@ botao_atalho.place(
     y=35
 )
 
+#---Sobreposição---
+
+user32 = ctypes.windll.user32
+gdi32 = ctypes.windll.gdi32
+kernel32 = ctypes.windll.kernel32
+
+WS_POPUP = 0x00080000
+WS_EX_LAYERED = 0x00080000
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_TOPMOST = 0x00000008
+WS_EX_NOACTIVATE = 0x08000000
+SW_HIDE = 0
+SW_SHOWNOACTIVATE = 4
+ULW_ALPHA = 0x00000002
+AC_SRC_OVER = 0x00
+AC_SRC_ALPHA = 0x01
+BI_RGB = 0
+DIB_RGB_COLORS = 0
+HWND_TOPMOST = -1
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOACTIVATE = 0x0010
+
+class POINT(ctypes.Structure):
+    _fields_ = [
+        ("x", wintypes.LONG),
+        ("y", wintypes.LONG)
+    ]
+
+class SIZE(ctypes.Structure):
+    _fields_ = [
+        ("cx", wintypes.LONG),
+        ("cy", wintypes.LONG)
+    ]
+
+class BLENDFUNCTION(ctypes.Structure):
+    _fields_ = [
+        ("BlendOp", ctypes.c_byte),
+        ("BlendFlags", ctypes.c_byte),
+        ("SourceConstantAlpha", ctypes.c_byte),
+        ("AlphaFormat", ctypes.c_byte)
+    ]
+
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", wintypes.LONG),
+        ("biHeight", wintypes.LONG),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", wintypes.LONG),
+        ("biYPelsPerMeter", wintypes.LONG),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD)
+    ]
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", BITMAPINFOHEADER),
+        ("bmiColors", wintypes.DWORD * 3)
+    ]
+
+overlay_hwnd = None
+overlay_largura = 48
+overlay_altura = 48
+overlay_x = 20
+overlay_y = 20
+
+def criar_overlay():
+    global overlay_hwnd
+
+    if overlay_hwnd is not None:
+        return
+
+    estilos = (
+        WS_EX_LAYERED |
+        WS_EX_TRANSPARENT |
+        WS_EX_TOOLWINDOW |
+        WS_EX_TOPMOST |
+        WS_EX_NOACTIVATE
+    )
+
+    overlay_hwnd = user32.CreateWindowExW(
+        estilos,
+        "Static",
+        "",
+        WS_POPUP,
+        overlay_x,
+        overlay_y,
+        overlay_largura,
+        overlay_altura,
+        None,
+        None,
+        kernel32.GetModuleHandleW(None),
+        None
+    )
+
+    if not overlay_hwnd:
+        print(
+            "Erro ao criar overlay:",
+            ctypes.get_last_error()
+        )
+
+        return
+
+    carregar_imagem_overlay()
+
+def carregar_imagem_overlay():
+    if not overlay_hwnd:
+        return
+
+    imagem = Image.open(
+        "assets/mute_overlay.png"
+    ).convert("RGBA")
+
+    # Mantém alta qualidade no redimensionamento
+    imagem = imagem.resize(
+        (overlay_largura, overlay_altura),
+        Image.Resampling.LANCZOS
+    )
+
+    largura, altura = imagem.size
+    pixels = bytearray(
+        imagem.tobytes(
+            "raw",
+            "BGRA"
+        )
+    )
+
+    for i in range(0, len(pixels), 4):
+        alpha = pixels[i + 3]
+
+        pixels[i] = (
+                pixels[i] * alpha // 255
+        )
+
+        pixels[i + 1] = (
+                pixels[i + 1] * alpha // 255
+        )
+
+        pixels[i + 2] = (
+                pixels[i + 2] * alpha // 255
+        )
+
+    screen_dc = user32.GetDC(None)
+
+    memory_dc = gdi32.CreateCompatibleDC(
+        screen_dc
+    )
+
+    bitmap_info = BITMAPINFO()
+
+    bitmap_info.bmiHeader.biSize = ctypes.sizeof(
+        BITMAPINFOHEADER
+    )
+
+    bitmap_info.bmiHeader.biWidth = largura
+
+    bitmap_info.bmiHeader.biHeight = -altura
+
+    bitmap_info.bmiHeader.biPlanes = 1
+    bitmap_info.bmiHeader.biBitCount = 32
+    bitmap_info.bmiHeader.biCompression = BI_RGB
+
+    bits = ctypes.c_void_p()
+
+    bitmap = gdi32.CreateDIBSection(
+        memory_dc,
+        ctypes.byref(bitmap_info),
+        DIB_RGB_COLORS,
+        ctypes.byref(bits),
+        None,
+        0
+    )
+
+    antigo_bitmap = gdi32.SelectObject(
+        memory_dc,
+        bitmap
+    )
+
+    ctypes.memmove(
+        bits,
+        bytes(pixels),
+        len(pixels)
+    )
+
+    posicao = POINT(
+        overlay_x,
+        overlay_y
+    )
+
+    tamanho = SIZE(
+        largura,
+        altura
+    )
+
+    origem = POINT(
+        0,
+        0
+    )
+
+    blend = BLENDFUNCTION(
+        AC_SRC_OVER,
+        0,
+        255,
+        AC_SRC_ALPHA
+    )
+
+    resultado = user32.UpdateLayeredWindow(
+        overlay_hwnd,
+        screen_dc,
+        ctypes.byref(posicao),
+        ctypes.byref(tamanho),
+        memory_dc,
+        ctypes.byref(origem),
+        0,
+        ctypes.byref(blend),
+        ULW_ALPHA
+    )
+
+    if not resultado:
+        print(
+            "Erro no UpdateLayeredWindow:",
+            ctypes.get_last_error()
+        )
+
+    gdi32.SelectObject(
+        memory_dc,
+        antigo_bitmap
+    )
+
+    gdi32.DeleteObject(
+        bitmap
+    )
+
+    gdi32.DeleteDC(
+        memory_dc
+    )
+
+    user32.ReleaseDC(
+        None,
+        screen_dc
+    )
+
+def mostrar_overlay():
+    if overlay_hwnd is None:
+        criar_overlay()
+
+    if not overlay_hwnd:
+        return
+
+    user32.SetWindowPos(
+        overlay_hwnd,
+        HWND_TOPMOST,
+        overlay_x,
+        overlay_y,
+        overlay_largura,
+        overlay_altura,
+        SWP_NOACTIVATE
+    )
+
+    user32.ShowWindow(
+        overlay_hwnd,
+        SW_SHOWNOACTIVATE
+    )
+
+def esconder_overlay():
+    if overlay_hwnd:
+
+        user32.ShowWindow(
+            overlay_hwnd,
+            SW_HIDE
+        )
+
 #---Iniciar---
+
+criar_overlay()
 
 atualizar_lista_microfones()
 
